@@ -8,6 +8,7 @@ import { Application, Router } from "https://deno.land/x/oak@v12.6.1/mod.ts";
 
 const BASE_URL = "https://app.wald.ai";
 const SANITIZE_URL = "https://api-sanitize.wald.ai/sanitize-prompt";
+const COMPLETION_URL = "https://app.wald.ai/api/chat";
 const ORIGIN = "https://wald.ai";
 
 const TEAM_ID = "f0432dab-b16a-4638-87ac-475cc4dbf535";
@@ -34,6 +35,13 @@ interface SanitizeRequest {
 interface SanitizeResponse {
   sanitizedPrompt: string;
   // 其他字段...
+}
+
+interface CompletionRequest {
+  messageId: string;
+  prompt: string;
+  teamId: string;
+  // 其他参数...
 }
 
 interface CompletionResponse {
@@ -110,24 +118,66 @@ async function callSanitizeApi(prompt: string, authToken: string): Promise<Sanit
   return await response.json();
 }
 
-// 模拟调用 completion API (需要找到实际API)
-async function callCompletionApi(sanitizedPrompt: string, authToken: string): Promise<any> {
-  // 这是一个模拟，实际需要找到正确的completion API
-  // 基于之前的分析，可能通过WebSocket或隐藏的HTTP API
+// 调用 completion API
+async function callCompletionApi(sanitizedPrompt: string, authToken: string): Promise<string> {
+  const messageId = `msg-${crypto.randomUUID()}`;
   
-  console.log('调用completion API，prompt:', sanitizedPrompt);
-  
-  // 临时返回模拟响应
-  return {
-    encryptedContent: {
-      encryptedData: btoa('这是模拟的AI响应内容'),
-      nonce: btoa('nonce123'),
-    },
-    logKeyEncryptedContent: {
-      encryptedData: btoa('log data'),
-      nonce: btoa('nonce456'),
-    },
+  const requestData = {
+    messageId,
+    prompt: sanitizedPrompt,
+    teamId: TEAM_ID,
+    // 添加其他必要参数
   };
+
+  const response = await fetch(COMPLETION_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${authToken}`,
+      "Origin": ORIGIN,
+      "Referer": `${ORIGIN}/`,
+      "Cookie": "", // 需要从authToken解析或获取
+    },
+    body: JSON.stringify(requestData),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Completion API error: ${response.status}`);
+  }
+
+  // 解析SSE流式响应
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('No response body');
+  }
+
+  const decoder = new TextDecoder();
+  let fullContent = '';
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    
+    // 解析SSE格式
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // 保留不完整的行
+
+    for (const line of lines) {
+      if (line.startsWith('0:"') && line.endsWith('"')) {
+        // 提取文本内容
+        const content = line.slice(3, -1); // 移除 0:" 和 "
+        fullContent += content;
+      } else if (line.startsWith('e:')) {
+        // 结束标记
+        break;
+      }
+    }
+  }
+
+  return fullContent;
 }
 
 // 处理聊天请求
@@ -137,16 +187,10 @@ async function handleChatRequest(prompt: string, authToken: string): Promise<str
   const sanitizedPrompt = sanitizeResult.sanitizedPrompt || prompt;
   
   // 步骤2: 调用completion API
-  const completionResult = await callCompletionApi(sanitizedPrompt, authToken);
+  const content = await callCompletionApi(sanitizedPrompt, authToken);
   
-  // 步骤3: 解密响应
-  // 注意: 需要正确的解密密钥，这里使用占位符
-  const symmetricKey = 'placeholder_key'; // 需要从用户的localStorage获取
-  const content = await decryptContent(
-    completionResult.encryptedContent.encryptedData,
-    completionResult.encryptedContent.nonce,
-    symmetricKey
-  );
+  // 步骤3: 如果需要解密，在这里添加
+  // const decryptedContent = await decryptContent(content, ...);
   
   return content;
 }
@@ -273,7 +317,7 @@ router.get("/", (ctx) => {
   ctx.response.body = {
     status: "ok",
     service: "wald-2api",
-    version: "1.0.0",
+    version: "2.0.0",
   };
 });
 
@@ -305,5 +349,5 @@ app.use(router.allowedMethods());
 // 启动服务器
 const port = 8000;
 console.log(`🚀 Wald.ai 转换器运行在 http://localhost:${port}`);
-console.log(`📚 Wald-2API Deno 版本 v1.0.0`);
+console.log(`📚 Wald-2API Deno 版本 v2.0.0`);
 await app.listen({ port });
