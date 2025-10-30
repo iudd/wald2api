@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简单浏览器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="browser">
+        <div class="toolbar">
+            <button id="back-btn" title="后退">←</button>
+            <button id="forward-btn" title="前进">→</button>
+            <button id="refresh-btn" title="刷新">↻</button>
+            <input type="text" id="url-input" placeholder="输入网址或搜索">
+            <button id="go-btn">前往</button>
+        </div>
+        <div class="content">
+            <iframe id="webview" src="about:blank"></iframe>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
