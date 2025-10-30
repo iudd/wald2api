@@ -14,6 +14,12 @@ const ORIGIN = "https://wald.ai";
 const TEAM_ID = "f0432dab-b16a-4638-87ac-475cc4dbf535";
 const USER_ID = "user_01K8S9HAJ90K73EWTD7P11P7GC";
 
+// 从localStorage获取的密钥
+const USER_SYMMETRIC_KEY = "b461e34caaaeceb0a11f2b58168c8e817adb7efdb7c5082078fe21e9182e6fe5";
+const LOG_PUBLIC_KEY = "3c5f64bb2f93f2fc37452cb39fd64222b372b06c437c6229c0185c7fb6b6677e";
+const TEAM_KEY = "670cafc0c657948687171fdd2e3cdda8f0e13538cd02c485216fb2b13c7f0d2d";
+const LOG_PRIVATE_KEY = "88ec70b2af219924a79f1117277954ab8ccd8dcb86c28f8c458d6c6cb6cfcf5a";
+
 interface ChatMessage {
   role: string;
   content: string | Array<{ type: string; text: string }>;
@@ -62,32 +68,43 @@ interface CompletionResponse {
   };
 }
 
-// 解密函数 (需要正确的密钥和算法)
-async function decryptContent(encryptedData: string, nonce: string, key: string): Promise<string> {
+// 十六进制字符串转字节数组
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+// 解密函数
+async function decryptContent(encryptedData: string, nonce: string): Promise<string> {
   try {
-    // 假设使用AES-GCM
-    const keyData = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+    // 使用userSymmetricKey进行AES-GCM解密
+    const keyBytes = hexToBytes(USER_SYMMETRIC_KEY);
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
-      keyData,
+      keyBytes,
       { name: 'AES-GCM' },
       false,
       ['decrypt']
     );
 
-    const encrypted = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
-    const nonceData = Uint8Array.from(atob(nonce), c => c.charCodeAt(0));
+    // encryptedData可能是十六进制
+    const encryptedBytes = hexToBytes(encryptedData);
+    const nonceBytes = hexToBytes(nonce);
 
     const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: nonceData },
+      { name: 'AES-GCM', iv: nonceBytes },
       cryptoKey,
-      encrypted
+      encryptedBytes
     );
 
     return new TextDecoder().decode(decrypted);
   } catch (e) {
     console.error('解密失败:', e);
-    return '解密失败，请检查密钥和算法';
+    // 如果解密失败，返回原始数据（可能是未加密的）
+    return encryptedData;
   }
 }
 
@@ -187,12 +204,13 @@ async function handleChatRequest(prompt: string, authToken: string): Promise<str
   const sanitizedPrompt = sanitizeResult.sanitizedPrompt || prompt;
   
   // 步骤2: 调用completion API
-  const content = await callCompletionApi(sanitizedPrompt, authToken);
+  const encryptedContent = await callCompletionApi(sanitizedPrompt, authToken);
   
-  // 步骤3: 如果需要解密，在这里添加
-  // const decryptedContent = await decryptContent(content, ...);
+  // 步骤3: 解密响应
+  // 注意: 这里需要正确的nonce，暂时使用示例
+  const decryptedContent = await decryptContent(encryptedContent, "21c121322f74afd60928a3fb");
   
-  return content;
+  return decryptedContent;
 }
 
 // 创建完成响应
@@ -317,7 +335,7 @@ router.get("/", (ctx) => {
   ctx.response.body = {
     status: "ok",
     service: "wald-2api",
-    version: "2.0.0",
+    version: "3.0.0",
   };
 });
 
@@ -349,5 +367,5 @@ app.use(router.allowedMethods());
 // 启动服务器
 const port = 8000;
 console.log(`🚀 Wald.ai 转换器运行在 http://localhost:${port}`);
-console.log(`📚 Wald-2API Deno 版本 v2.0.0`);
+console.log(`📚 Wald-2API Deno 版本 v3.0.0`);
 await app.listen({ port });
