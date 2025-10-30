@@ -1,60 +1,75 @@
-// 调用 completion API
-async function callCompletionApi(sanitizedPrompt: string, authToken: string): Promise<string> {
-  const messageId = `msg-${crypto.randomUUID()}`;
-  
-  const requestData = {
-    messageId,
-    prompt: sanitizedPrompt,
-    teamId: TEAM_ID,
-    // 添加其他必要参数
-  };
-
-  const response = await fetch(COMPLETION_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Cookie": authToken, // 使用完整cookies
-      "Origin": ORIGIN,
-      "Referer": `${ORIGIN}/`,
-    },
-    body: JSON.stringify(requestData),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Completion API error: ${response.status}`);
+// 聊天接口
+router.post("/v1/chat/completions", async (ctx) => {
+  // 获取认证信息 (现在是cookies)
+  const cookieHeader = ctx.request.headers.get("cookie");
+  if (!cookieHeader || !cookieHeader.includes("wos-user")) {
+    ctx.response.status = 401;
+    ctx.response.body = { error: "需要有效的 Wald.ai cookies" };
+    return;
   }
 
-  // 解析SSE流式响应
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error('No response body');
+  const authToken = cookieHeader; // 直接使用完整cookies
+
+  let requestData: ChatRequest;
+  try {
+    requestData = await ctx.request.body({ type: "json" }).value;
+  } catch (e) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: `无效的 JSON: ${e}` };
+    return;
   }
 
-  const decoder = new TextDecoder();
-  let fullContent = '';
-  let buffer = '';
+  const model = requestData.model || "wald-gpt4";
+  const messages = requestData.messages || [];
+  const stream = requestData.stream || false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  if (!messages || messages.length === 0) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "messages 不能为空" };
+    return;
+  }
 
-    buffer += decoder.decode(value, { stream: true });
+  // 转换对话
+  const conversationParts: string[] = [];
+  for (const msg of messages) {
+    const role = msg.role || "unknown";
+    const content = msg.content || "";
     
-    // 解析SSE格式
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // 保留不完整的行
-
-    for (const line of lines) {
-      if (line.startsWith('0:"') && line.endsWith('"')) {
-        // 提取文本内容
-        const content = line.slice(3, -1); // 移除 0:" 和 "
-        fullContent += content;
-      } else if (line.startsWith('e:')) {
-        // 结束标记
-        break;
-      }
+    let textContent = "";
+    if (Array.isArray(content)) {
+      textContent = content
+        .filter(item => item.type === "text")
+        .map(item => item.text)
+        .join("");
+    } else {
+      textContent = content;
+    }
+    
+    if (textContent) {
+      conversationParts.push(`${role}:\n${textContent}\n\n`);
     }
   }
 
-  return fullContent;
-}
+  const fullPrompt = conversationParts.join("\n\n");
+
+  if (!fullPrompt.trim()) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "整合后的消息内容为空" };
+    return;
+  }
+
+  const requestId = `chatcmpl-${crypto.randomUUID()}`;
+
+  if (stream) {
+    ctx.response.status = 501;
+    ctx.response.body = { error: "流式响应暂未实现" };
+  } else {
+    try {
+      const content = await handleChatRequest(fullPrompt, authToken);
+      ctx.response.body = createCompletionResponse(requestId, model, content);
+    } catch (e) {
+      ctx.response.status = 500;
+      ctx.response.body = { error: `处理请求失败: ${e}` };
+    }
+  }
+});
